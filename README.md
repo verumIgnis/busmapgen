@@ -1,5 +1,7 @@
 # Bus Map Generator
-This script will automatically generate a bus map of the UK
+This script will automatically generate a bus map of the UK. It is highly customisable, here is an example of what it can generate:
+
+![Example bus map of the UK](https://verumignis.com/busmapgen-example.png)
 
 ## How to use this script
 First, install the required dependincies:
