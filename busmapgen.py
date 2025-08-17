@@ -7,7 +7,7 @@ try:
     from bs4 import BeautifulSoup
 except ModuleNotFoundError:
     print("\033[31mOne or more dependencies are missing! To install required dependencies run:\033[0m") # cant use colorama because its not initialised yet
-    print("pip install pygame colorama requests beautifulsoup4")
+    print("pip install pygame colorama requests beautifulsoup4 lxml")
 
 # ====== CONFIGURATION ======
 # bounding box format: (lon, lat, lon, lat) - south west corner first
