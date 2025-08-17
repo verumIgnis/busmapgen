@@ -5,9 +5,9 @@ This script will automatically generate a bus map of the UK. It is highly custom
 
 ## How to use this script
 First, install the required dependincies:
-`pip install pygame colorama requests beautifulsoup4`
+`pip install pygame colorama requests beautifulsoup4 lxml`
 
-You can just run the script as is and it will prompt you to download the data needed to generate a map, however this will take a while, especially to download the geometry data:
+You can just run the script as is and it will prompt you to download the data needed to generate a map, however this will take a while, especially to download the geometry data. To run the script:
 `python3 busmapgen.py`
 
 Before running the script for the first time, I would recommend downloading the geometry data from [here](https://nextcloud.verumignis.com/index.php/s/FaHQJARTWecQjKn), then extract the zip into the same directory as the script and set `UPDATE_GEOMETRY = True` the first time you run the script to download the geometry any new routes.
