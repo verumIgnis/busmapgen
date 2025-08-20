@@ -9,6 +9,7 @@ except ModuleNotFoundError:
     print("\033[31mOne or more dependencies are missing! To install required dependencies run:\033[0m") # cant use colorama because its not initialised yet
     print("pip install pygame colorama requests beautifulsoup4 lxml")
 
+
 # ====== CONFIGURATION ======
 # bounding box format: (lon, lat, lon, lat) - south west corner first
 BOUNDING_BOX = (-10.8, 49.85, 2.1, 59.5)    # entire UK
@@ -16,8 +17,9 @@ BOUNDING_BOX = (-10.8, 49.85, 2.1, 59.5)    # entire UK
 #BOUNDING_BOX = (-1.75, 53.65, -1.35, 54.0)  # leeds
 #BOUNDING_BOX = (-0.6, 51.2, 0.4, 51.75)     # london
 #BOUNDING_BOX = (-2.8, 51.35, -2.4, 51.6)    # bristol
+#BOUNDING_BOX = (-0.85, 52.4, 0.5, 53.75)  # DRT disaster (allow operator PCCO) 
 
-scale_m_per_px = 350 # zoom - lower numbers result in higher quality outputs but take longer to render
+SCALE_M_PER_PX = 400 # zoom - lower numbers result in higher quality outputs but take longer to render
 MAX_LINE_LENGTH_METERS = 100000 # if one line exceeds this length, the entire route is omitted, avoids ugly lines from long distance coaches
 WINDOW_TITLE = "Bus Map Generator"
 BACKGROUND_COLOR = (20, 20, 20)
@@ -46,6 +48,11 @@ ROUTE_STYLE_BY_FREQUENCY = [
     [10000, 3, 255]
 ]
 
+SHOW_ONLY_UNCOLORED = False # hide operators that have an operator color set, useful to find operators that have been missed
+
+FLAT_EARTH = False # maps will look slightly distorted but will tile nicely
+REF_LAT = 54.0 # ignored if FLAT_EARTH = False
+
 #labels
 CITY_LABEL_COLOR = (255, 255, 255)
 CITY_LABEL_ALPHA = 0 # 0 (invisible) to 255 (opaque)
@@ -54,7 +61,7 @@ CITY_LABEL_FONT_NAME = None # None = system default
 CITY_LABEL_UPPERCASE = True
 
 # route labels
-DRAW_ROUTE_LABELS = False
+DRAW_ROUTE_LABELS = True
 ROUTE_LABEL_FONT_NAME = None  # None = system default
 ROUTE_LABEL_FONT_SIZE = 20
 ROUTE_LABEL_ALPHA = 255
@@ -93,24 +100,32 @@ PRIVATE_KEYWORDS = [ # used to determine if a route is private - if any of these
     "For school students only."
 ]
 
+
 # ===========================
 # Below this line is the actual script. There are no config options below here, but feel free to edit it to add functionality.
 # If you add anything cool, please send it to me (verumIgnis on discord), I would really like to see what you are able to do with this script.
+
 
 ROUTES_CSV = os.path.join(DATA_DIR, ROUTES_CSV)
 CITIES_CSV = os.path.join(DATA_DIR, CITIES_CSV)
 OPERATOR_COLORS_CSV = os.path.join(DATA_DIR, OPERATOR_COLORS_CSV)
 
+init(autoreset=True) # for colorama, this MSUT only be run once
+
 def meters_per_degree(lat):
-    lat_rad = radians(lat)
+    if FLAT_EARTH:
+        lat_rad = radians(REF_LAT) # use fixed scale based on REF_LAT
+    else:
+        lat_rad = radians(lat) # use variable scale depending on latitude
+
     m_per_deg_lat = 111132.92 - 559.82 * cos(2 * lat_rad) + 1.175 * cos(4 * lat_rad)
     m_per_deg_lon = 111412.84 * cos(lat_rad) - 93.5 * cos(3 * lat_rad)
     return m_per_deg_lat, m_per_deg_lon
 
-def geo_to_pixel(lon, lat, origin_lon, origin_lat, m_per_deg_lat, m_per_deg_lon):
+def geo_to_pixel(lon, lat, origin_lon, origin_lat, m_per_deg_lat, m_per_deg_lon, SCALE_M_PER_PX):
     dx = (lon - origin_lon) * m_per_deg_lon
     dy = (origin_lat - lat) * m_per_deg_lat
-    return int(dx / scale_m_per_px), int(dy / scale_m_per_px)
+    return int(round(dx / SCALE_M_PER_PX)), int(round(dy / SCALE_M_PER_PX))
 
 def bbox_intersects(bbox1, bbox2):
     min_lon1, min_lat1, max_lon1, max_lat1 = bbox1
@@ -195,7 +210,7 @@ def draw_city_labels(screen, min_lon, max_lat, m_per_deg_lat, m_per_deg_lon):
 
                 lon = float(row["longitude"])
                 lat = float(row["latitude"])
-                x, y = geo_to_pixel(lon, lat, min_lon, max_lat, m_per_deg_lat, m_per_deg_lon)
+                x, y = geo_to_pixel(lon, lat, min_lon, max_lat, m_per_deg_lat, m_per_deg_lon, SCALE_M_PER_PX)
 
                 label_surface = font.render(name, True, CITY_LABEL_COLOR)
                 label_surface.set_alpha(CITY_LABEL_ALPHA)
@@ -503,7 +518,6 @@ def check_data():
 
 
 def main():
-    init(autoreset=True) # for colorama
 
     ascii_art = f'''{Fore.RED}
      .---------------------------.            .---------------------------.
@@ -540,10 +554,11 @@ def main():
 
     width_m = (max_lon - min_lon) * m_per_deg_lon
     height_m = (max_lat - min_lat) * m_per_deg_lat
-    width_px = int(width_m / scale_m_per_px)
-    height_px = int(height_m / scale_m_per_px)
+    width_px = int(width_m / SCALE_M_PER_PX)
+    height_px = int(height_m / SCALE_M_PER_PX)
 
     pygame.init()
+    #print(pygame.display.get_driver())
     screen = pygame.display.set_mode((width_px, height_px))
     pygame.display.set_caption(WINDOW_TITLE)
     screen.fill(BACKGROUND_COLOR)
@@ -653,6 +668,12 @@ def main():
                 base_color = get_operator_color(operator, operator_colors)
                 color = scale_color(base_color, brightness)
 
+                if SHOW_ONLY_UNCOLORED and base_color != (255, 255, 255):
+                    filter_counters["Operator color set"] += 1
+                    last_filter = "Operator color set"
+                    print(f"{Fore.CYAN}Drawing {Fore.YELLOW}{counter}{Fore.CYAN}/{Fore.GREEN}{total_routes} {Fore.CYAN}| Last filter: {Fore.YELLOW}Operator color set          ", end="\r")
+                    continue
+
                 if width <= 0:
                     filter_counters["Low frequency"] += 1
                     last_filter = "Low frequency"
@@ -696,7 +717,7 @@ def main():
                     if len(line) < 2:
                         continue
                     points = [
-                        geo_to_pixel(lon, lat, min_lon, max_lat, m_per_deg_lat, m_per_deg_lon)
+                        geo_to_pixel(lon, lat, min_lon, max_lat, m_per_deg_lat, m_per_deg_lon, SCALE_M_PER_PX)
                         for lon, lat in line
                     ]
                     pygame.draw.lines(screen, color, False, points, width)
@@ -709,6 +730,10 @@ def main():
                     })
 
                 pygame.display.flip()
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        pygame.quit()
+                        sys.exit()
 
             except Exception as e:
                 print(f"Error processing service {row.get('serviceID', '?')}: {e}") # should never happen
