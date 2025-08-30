@@ -3,4 +3,3 @@ colorama
 requests
 beautifulsoup4
 lxml
-aiohttp
