@@ -11,27 +11,28 @@ try:
     from collections import defaultdict
     from colorama import init, Fore, Style
     from bs4 import BeautifulSoup
+    from PIL import Image, ImageDraw, ImageFont
 except ModuleNotFoundError:
     print(
         "\033[31mOne or more dependencies are missing! To install required dependencies run:\033[0m"
     )  # cant use colorama because its not initialised yet
-    print("pip install pygame colorama requests beautifulsoup4 lxml")
+    print("pip install pygame colorama requests beautifulsoup4 lxml pillow")
     exit(1)
 
 
 # ====== CONFIGURATION ======
 # bounding box format: (lon, lat, lon, lat) - south west corner first
-BOUNDING_BOX = (-10.8, 49.85, 2.1, 59.5)  # entire UK
+BOUNDING_BOX = (-10.8, 49.85, 2.1, 59.5)     # entire UK
 # BOUNDING_BOX = (-2.6, 53.3, -2, 53.65)      # manchester
 # BOUNDING_BOX = (-1.75, 53.65, -1.35, 54.0)  # leeds
 # BOUNDING_BOX = (-0.6, 51.2, 0.4, 51.75)     # london
 # BOUNDING_BOX = (-2.8, 51.35, -2.4, 51.6)    # bristol
-# BOUNDING_BOX = (-0.85, 52.4, 0.5, 53.75)  # DRT disaster (allow operator PCCO)
+# BOUNDING_BOX = (-0.85, 52.4, 0.5, 53.75)    # DRT disaster (allow operator PCCO)
 
-SCALE_M_PER_PX = 400  # zoom - lower numbers result in higher quality outputs but take longer to render
-MAX_LINE_LENGTH_METERS = 100000  # if one line exceeds this length, the entire route is omitted, avoids ugly lines from long distance coaches
+SCALE_M_PER_PX = 400  # zoom - lower numbers result in higher quality outputs but take longer to render, use headless rendering for very small values
 WINDOW_TITLE = "Bus Map Generator"
 BACKGROUND_COLOR = (20, 20, 20)
+HEADLESS_RENDERING = False  # use pillow instead of pygame, recommended for larger maps or for use in situations where you cant use pygame, labels might render slightly different.
 
 # this dosent really work because there is no reliable data as to what is and isnt a public route
 IGNORE_PRIVATE_ROUTES = False
@@ -61,31 +62,64 @@ INCLUDE_MODES = []  # Include only specified modes; leave empty for no restricti
 # calcuated as the distance from one corner of the bounding box to the opposite corner
 MIN_ROUTE_LENGTH = 0  # meters
 MAX_ROUTE_LENGTH = 10000000000  # meters
+MAX_LINE_LENGTH_METERS = 100000  # if one line exceeds this length, the entire route is omitted, avoids ugly lines from long distance coaches
 
-# frequency (buses per day, both directions), line width (px), brightness (0-255)
+# frequency (buses per day; both directions), line width (px), brightness (0-255)
 ROUTE_STYLE_BY_FREQUENCY = [
     [8, 1, 80],
+    [15, 1, 102],
     [20, 2, 124],
+    [45, 2, 146],
     [70, 2, 169],
+    [95, 2, 190],  
     [120, 3, 212],
-    [10000, 3, 255],
+    [200, 3, 220],
+    [350, 3, 238],
+    [10000, 3, 255]
+]
+"""
+ROUTE_STYLE_BY_FREQUENCY = [
+    [8, 5, 80],
+    [15, 6, 102],
+    [20, 7, 124],
+    [45, 8, 146],
+    [70, 9, 169],
+    [95, 10, 190],  
+    [120, 12, 212],
+    [200, 13, 220],
+    [350, 14, 238],
+    [10000, 15, 255]
 ]
 
+ROUTE_STYLE_BY_FREQUENCY = [
+    [8, 15, 80],
+    [15, 18, 102],
+    [20, 21, 124],
+    [45, 24, 146],
+    [70, 27, 169],
+    [95, 30, 190],  
+    [120, 36, 212],
+    [200, 39, 220],
+    [350, 42, 238],
+    [10000, 45, 255]
+]
+"""
 SHOW_ONLY_UNCOLORED = False  # hide operators that have an operator color set, useful to find operators that have been missed
 
-FLAT_EARTH = False  # maps will look slightly distorted but will tile nicely
+FLAT_EARTH = True  # local or regional maps will look slightly distorted but will tile nicely - maps of the entire UK are less distorted with this enabled if REF_LAT = 54.0
 REF_LAT = 54.0  # ignored if FLAT_EARTH = False
 
-# labels
+# city labels
+DRAW_CITY_LABELS = False
 CITY_LABEL_COLOR = (255, 255, 255)
-CITY_LABEL_ALPHA = 0  # 0 (invisible) to 255 (opaque)
+CITY_LABEL_ALPHA = 0  # 0 (invisible) to 255 (opaque) - does not work in headless mode
 CITY_LABEL_FONT_SIZE = 32
-CITY_LABEL_FONT_NAME = None  # None = system default
+CITY_LABEL_FONT_NAME = None  # None = pygame default - freesansbold.ttf (when in headless mode pillow will use default pygame font)
 CITY_LABEL_UPPERCASE = True
 
 # route labels
 DRAW_ROUTE_LABELS = True
-ROUTE_LABEL_FONT_NAME = None  # None = system default
+ROUTE_LABEL_FONT_NAME = None  # None = pygame default - freesansbold.ttf (when in headless mode pillow will use default pygame font)
 ROUTE_LABEL_FONT_SIZE = 20
 ROUTE_LABEL_ALPHA = 255
 OVERRIDE_ROUTE_LABEL_COLOR = False  # if false labels will be the same color as routes
@@ -108,6 +142,9 @@ UPDATE_GEOMETRY = False  # updates geometry data to be up to date with routes da
 UPDATE_DATA = False  # updates cities CSV and colors CSV
 
 # download options
+FORCE_ROUTE_DATE = False  # set False to use data for today, if no buses today on a particular route, get the timetable for the next day the route operates
+ROUTE_DATE = "?date=2025-09-01"  # if used, forces the script to generate routes.csv based on the date specified, going too far in the future/past will result in routes being missed, you can actually put whatever parameters you want here
+
 SERVICES_SITEMAP_URL = "https://bustimes.org/sitemap-services.xml"
 SERVICES_JSON_URL = "https://bustimes.org/api/services/?format=json&limit=1000000"
 OPERATOR_COLORS_URL = "https://verumignis.com/operator-colors.csv"
@@ -119,7 +156,7 @@ HEADERS = {  # will be included with any request made to any of the above URLs
 }
 
 PRIVATE_KEYWORDS = [  # used to determine if a route is private - if any of these strings appear on the route page on bustimes.org, the route is considered private
-    "not open to the public",
+    "not open to the public",  # filter for routes marked as private in open data (not accurate!)
     "For school students only.",
 ]
 
@@ -134,6 +171,27 @@ CITIES_CSV = os.path.join(DATA_DIR, CITIES_CSV)
 OPERATOR_COLORS_CSV = os.path.join(DATA_DIR, OPERATOR_COLORS_CSV)
 
 init(autoreset=True)  # for colorama, this MSUT only be run once
+pygame.font.init()
+
+if HEADLESS_RENDERING:
+    pygame_dir = os.path.dirname(pygame.__file__)
+    default_font_path = os.path.join(pygame_dir, "freesansbold.ttf") # use the pygame default font even in headless mode for consistency
+
+    if CITY_LABEL_FONT_NAME:
+        city_font = ImageFont.truetype(CITY_LABEL_FONT_NAME, CITY_LABEL_FONT_SIZE)
+    else:
+        city_font = ImageFont.truetype(default_font_path, CITY_LABEL_FONT_SIZE)
+
+    if ROUTE_LABEL_FONT_NAME:
+        route_font = ImageFont.truetype(ROUTE_LABEL_FONT_NAME, ROUTE_LABEL_FONT_SIZE)
+    else:
+        route_font = ImageFont.truetype(default_font_path, ROUTE_LABEL_FONT_SIZE)
+
+    CITY_LABEL_FONT_SIZE = CITY_LABEL_FONT_SIZE - 7 # not a perfect conversion, but works well for size 20
+    ROUTE_LABEL_FONT_SIZE = ROUTE_LABEL_FONT_SIZE - 7
+else:
+    city_font = pygame.font.SysFont(CITY_LABEL_FONT_NAME, CITY_LABEL_FONT_SIZE)
+    route_font = pygame.font.SysFont(ROUTE_LABEL_FONT_NAME, ROUTE_LABEL_FONT_SIZE)
 
 
 def meters_per_degree(lat):
@@ -146,14 +204,10 @@ def meters_per_degree(lat):
     m_per_deg_lon = 111412.84 * cos(lat_rad) - 93.5 * cos(3 * lat_rad)
     return m_per_deg_lat, m_per_deg_lon
 
-
-def geo_to_pixel(
-    lon, lat, origin_lon, origin_lat, m_per_deg_lat, m_per_deg_lon, SCALE_M_PER_PX
-):
+def geo_to_pixel(lon, lat, origin_lon, origin_lat, m_per_deg_lat, m_per_deg_lon, SCALE_M_PER_PX):
     dx = (lon - origin_lon) * m_per_deg_lon
     dy = (origin_lat - lat) * m_per_deg_lat
     return int(round(dx / SCALE_M_PER_PX)), int(round(dy / SCALE_M_PER_PX))
-
 
 def bbox_intersects(bbox1, bbox2):
     min_lon1, min_lat1, max_lon1, max_lat1 = bbox1
@@ -164,7 +218,6 @@ def bbox_intersects(bbox1, bbox2):
         or max_lat1 < min_lat2
         or min_lat1 > max_lat2
     )
-
 
 def segment_too_long(route, m_per_deg_lat, m_per_deg_lon):
     for segment in route:
@@ -178,13 +231,11 @@ def segment_too_long(route, m_per_deg_lat, m_per_deg_lon):
                 return True
     return False
 
-
 def bbox_diagonal_distance(bbox, m_per_deg_lat, m_per_deg_lon):
     min_lon, min_lat, max_lon, max_lat = bbox
     dx = (max_lon - min_lon) * m_per_deg_lon
     dy = (max_lat - min_lat) * m_per_deg_lat
     return sqrt(dx * dx + dy * dy)
-
 
 def get_style_for_frequency(frequency):
     sorted_styles = sorted(ROUTE_STYLE_BY_FREQUENCY, key=lambda x: x[0])
@@ -193,12 +244,10 @@ def get_style_for_frequency(frequency):
             return width, color
     return sorted_styles[-1][1], sorted_styles[-1][2]
 
-
 def get_operator_color(operator, operator_colors):
     return operator_colors.get(
         operator, operator_colors.get("DEFAULT", (255, 255, 255))
     )
-
 
 def load_operator_colors(path):
     operator_colors = {}
@@ -220,7 +269,6 @@ def load_operator_colors(path):
         operator_colors["DEFAULT"] = (255, 255, 255)
     return operator_colors
 
-
 def scale_color(color, target_brightness):
     r, g, b = color
     current_brightness = max(r, g, b)
@@ -234,8 +282,10 @@ def scale_color(color, target_brightness):
     )
     return scaled
 
-
 def draw_city_labels(screen, min_lon, max_lat, m_per_deg_lat, m_per_deg_lon):
+    if not DRAW_CITY_LABELS:
+        return
+
     if not os.path.isfile(CITIES_CSV):
         print(f"{CITIES_CSV} not found!")
         return
@@ -262,22 +312,28 @@ def draw_city_labels(screen, min_lon, max_lat, m_per_deg_lat, m_per_deg_lon):
                     SCALE_M_PER_PX,
                 )
 
-                label_surface = font.render(name, True, CITY_LABEL_COLOR)
-                label_surface.set_alpha(CITY_LABEL_ALPHA)
+                if HEADLESS_RENDERING:
+                    bbox = city_font.getbbox(name)
+                    text_width, text_height = bbox[2] - bbox[0], bbox[3] - bbox[1]
 
-                # center the label
-                text_rect = label_surface.get_rect(center=(x, y))
-                screen.blit(label_surface, text_rect)
+                    text_x = x - text_width // 2
+                    text_y = y - text_height // 2
+
+                    screen.text((text_x, text_y), name, font=city_font, fill=CITY_LABEL_COLOR + (CITY_LABEL_ALPHA,)) # screen is draw in this context
+                else:
+                    label_surface = city_font.render(name, True, CITY_LABEL_COLOR)
+                    label_surface.set_alpha(CITY_LABEL_ALPHA)
+
+                    # center the label
+                    text_rect = label_surface.get_rect(center=(x, y))
+                    screen.blit(label_surface, text_rect)
 
             except Exception as e:
                 print(f"Failed to render city {row.get('name', '?')}: {e}")
 
-
 def draw_route_labels(screen, labels, m_per_deg_lat, m_per_deg_lon):
     if not DRAW_ROUTE_LABELS:
         return
-
-    font = pygame.font.SysFont(ROUTE_LABEL_FONT_NAME, ROUTE_LABEL_FONT_SIZE)
 
     for label in labels:
         try:
@@ -320,23 +376,46 @@ def draw_route_labels(screen, labels, m_per_deg_lat, m_per_deg_lon):
             else:
                 label_x, label_y = points[len(points) // 2]  # fallback
 
-            label_surface = font.render(text, True, color)
-            label_surface.set_alpha(ROUTE_LABEL_ALPHA)
-            text_rect = label_surface.get_rect(center=(label_x, label_y))
+            if HEADLESS_RENDERING:
+                ascent, descent = route_font.getmetrics()
+                font_height = ascent + descent
+                padding = ROUTE_LABEL_BOX_PADDING
+                box_height = font_height + padding * 2
+                bbox = screen.textbbox((0, 0), text, font=route_font)
 
-            if DRAW_ROUTE_LABEL_BOX:
-                padded_rect = text_rect.inflate(
-                    ROUTE_LABEL_BOX_PADDING * 2, ROUTE_LABEL_BOX_PADDING * 2
-                )
+                text_width = bbox[2] - bbox[0]
+                text_x = label_x - text_width // 2
+                text_y = label_y - font_height // 2
 
-                pygame.draw.rect(screen, ROUTE_LABEL_BG_COLOR, padded_rect)
-                pygame.draw.rect(screen, color, padded_rect, ROUTE_LABEL_BOX_WIDTH)
+                if DRAW_ROUTE_LABEL_BOX:
+                    padding = ROUTE_LABEL_BOX_PADDING
+                    half_width = ROUTE_LABEL_BOX_WIDTH / 2
 
-            screen.blit(label_surface, text_rect)
+                    box = [
+                        text_x - padding + half_width,
+                        text_y - padding + half_width,
+                        text_x + text_width + padding - half_width,
+                        text_y + font_height + padding - half_width
+                    ]
+                    screen.rectangle(box, fill=ROUTE_LABEL_BG_COLOR, outline=color, width=ROUTE_LABEL_BOX_WIDTH)
+
+                screen.text((text_x, text_y), text, font=route_font, fill=color + (ROUTE_LABEL_ALPHA,))
+
+            else:
+                label_surface = route_font.render(text, True, color)
+                label_surface.set_alpha(ROUTE_LABEL_ALPHA)
+                text_rect = label_surface.get_rect(center=(label_x, label_y))
+
+                if DRAW_ROUTE_LABEL_BOX:
+                    padded_rect = text_rect.inflate(ROUTE_LABEL_BOX_PADDING * 2, ROUTE_LABEL_BOX_PADDING * 2)
+                    
+                    pygame.draw.rect(screen, ROUTE_LABEL_BG_COLOR, padded_rect)
+                    pygame.draw.rect(screen, color, padded_rect, ROUTE_LABEL_BOX_WIDTH)
+
+                screen.blit(label_surface, text_rect)
 
         except Exception as e:
             print(f"Failed to draw label {label.get('routeNumber', '?')}: {e}")
-
 
 def color_status(code):
     if code == 200:
@@ -345,7 +424,6 @@ def color_status(code):
         return Fore.RED + str(code) + Style.RESET_ALL
     else:
         return Fore.YELLOW + str(code) + Style.RESET_ALL
-
 
 def parse_service_page(r):
     try:
@@ -390,7 +468,6 @@ def parse_service_page(r):
         print(f"\nFailed to parse page: {e}")
         return None, 0
 
-
 def download_routes():  # uses both bustimes.org API data and scraped data, because neither has all the data needed
     print(f"{Fore.GREEN}Downloading Routes")
 
@@ -423,6 +500,9 @@ def download_routes():  # uses both bustimes.org API data and scraped data, beca
     try:
         for i, url in enumerate(service_urls, 1):
             route_slug = url.rsplit("/", 1)[-1]
+
+            if FORCE_ROUTE_DATE:
+                url = f"{url}{ROUTE_DATE}"
 
             r = requests.get(url, headers=HEADERS)
             code = r.status_code
@@ -477,7 +557,6 @@ def download_routes():  # uses both bustimes.org API data and scraped data, beca
 
     print(f"{Fore.GREEN}Saved routes to {ROUTES_CSV}")
 
-
 def download_colors():
     try:
         r = requests.get(OPERATOR_COLORS_URL, headers=HEADERS)
@@ -488,8 +567,7 @@ def download_colors():
 
     except Exception as e:
         print(f"{Fore.RED}Failed to download {OPERATOR_COLORS_CSV}: {e}")
-        sys.exit()
-
+        exit(1)
 
 def download_cities():
     try:
@@ -501,12 +579,9 @@ def download_cities():
 
     except Exception as e:
         print(f"{Fore.RED}Failed to download {OPERATOR_COLORS_CSV}: {e}")
-        sys.exit()
+        exit(1)
 
-
-def download_geometry(
-    start,
-):  # scrapes bustimes.org because its much easier to work with than the data in the bustimes.org trips API
+def download_geometry(start):  # scrapes bustimes.org because its much easier to work with than the data in the bustimes.org trips API
     # work out what the highest route ID is, this should be run after updaing routes.csv
     with open(ROUTES_CSV, newline="") as f:
         reader = csv.DictReader(f)
@@ -555,7 +630,6 @@ def download_geometry(
         sys.stdout.flush()
 
     print(f"\n{Fore.GREEN}Finished downloading geometry.")
-
 
 def check_data():
     if not os.path.exists(MAPS_DIR):
@@ -655,11 +729,15 @@ def main():
     width_px = int(width_m / SCALE_M_PER_PX)
     height_px = int(height_m / SCALE_M_PER_PX)
 
-    pygame.init()
-    # print(pygame.display.get_driver())
-    screen = pygame.display.set_mode((width_px, height_px))
-    pygame.display.set_caption(WINDOW_TITLE)
-    screen.fill(BACKGROUND_COLOR)
+    if HEADLESS_RENDERING:
+        image = Image.new("RGBA", (width_px, height_px), BACKGROUND_COLOR)
+        draw = ImageDraw.Draw(image)
+    else:
+        pygame.init()
+        #print(pygame.display.get_driver())
+        screen = pygame.display.set_mode((width_px, height_px))
+        pygame.display.set_caption(WINDOW_TITLE)
+        screen.fill(BACKGROUND_COLOR)
 
     route_labels = []
     filter_counters = defaultdict(int)
@@ -881,7 +959,11 @@ def main():
                         )
                         for lon, lat in line
                     ]
-                    pygame.draw.lines(screen, color, False, points, width)
+
+                    if HEADLESS_RENDERING:
+                        draw.line(points, fill=color, width=width)
+                    else:
+                        pygame.draw.lines(screen, color, False, points, width)
 
                 if DRAW_ROUTE_LABELS:
                     route_labels.append(
@@ -892,11 +974,12 @@ def main():
                         }
                     )
 
-                pygame.display.flip()
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        pygame.quit()
-                        sys.exit()
+                if not HEADLESS_RENDERING:
+                    pygame.display.flip()
+                    for event in pygame.event.get():
+                        if event.type == pygame.QUIT:
+                            pygame.quit()
+                            sys.exit()
 
             except Exception as e:
                 print(
@@ -904,12 +987,18 @@ def main():
                 )  # should never happen
                 continue
 
-    draw_route_labels(screen, route_labels, m_per_deg_lat, m_per_deg_lon)
-    draw_city_labels(screen, min_lon, max_lat, m_per_deg_lat, m_per_deg_lon)
+    if HEADLESS_RENDERING:
+        draw_route_labels(draw, route_labels, m_per_deg_lat, m_per_deg_lon)
+        draw_city_labels(draw, min_lon, max_lat, m_per_deg_lat, m_per_deg_lon)
 
-    pygame.display.flip()
-    pygame.image.save(screen, os.path.join(MAPS_DIR, output_file))
-    pygame.quit()
+        image.save(os.path.join(MAPS_DIR, output_file))
+    else:
+        draw_route_labels(screen, route_labels, m_per_deg_lat, m_per_deg_lon)
+        draw_city_labels(screen, min_lon, max_lat, m_per_deg_lat, m_per_deg_lon)
+
+        pygame.display.flip()
+        pygame.image.save(screen, os.path.join(MAPS_DIR, output_file))
+        pygame.quit()
 
     print(f"\n{Fore.GREEN}Finished drawing bus map.\n")
     print(f"{Fore.CYAN}Total routes: {Fore.YELLOW}{counter}")
